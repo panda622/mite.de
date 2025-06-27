@@ -10,8 +10,9 @@ import os
 import sys
 from datetime import datetime
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
+from datetime import date, timedelta
 
 
 class MiteClient:
@@ -101,6 +102,51 @@ class MiteClient:
         
         return None
     
+    def get_time_entries(self, 
+                        from_date: Optional[str] = None,
+                        to_date: Optional[str] = None,
+                        at: Optional[str] = None,
+                        user_id: Optional[int] = None,
+                        project_id: Optional[int] = None,
+                        limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get time entries with optional filters.
+        
+        Args:
+            from_date: Start date in YYYY-MM-DD format
+            to_date: End date in YYYY-MM-DD format
+            at: Date filter like 'today', 'yesterday', 'this_week', 'last_week'
+            user_id: Filter by user ID
+            project_id: Filter by project ID
+            limit: Maximum number of entries to return
+            
+        Returns:
+            List of time entry dictionaries
+        """
+        url = f"{self.base_url}/time_entries.json"
+        params = {'limit': limit}
+        
+        if from_date:
+            params['from'] = from_date
+        if to_date:
+            params['to'] = to_date
+        if at:
+            params['at'] = at
+        if user_id:
+            params['user_id'] = user_id
+        if project_id:
+            params['project_id'] = project_id
+        
+        try:
+            response = requests.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching time entries: {e}")
+            if hasattr(e.response, 'text'):
+                print(f"Response: {e.response.text}")
+            return []
+    
     def get_services(self) -> list:
         """Get list of all services."""
         url = f"{self.base_url}/services.json"
@@ -171,6 +217,15 @@ def save_config(account: str, api_key: str):
         print(f"Error saving config: {e}")
 
 
+def format_duration(minutes: int) -> str:
+    """Format minutes to human-readable duration."""
+    hours = minutes // 60
+    mins = minutes % 60
+    if hours > 0:
+        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
+    return f"{mins}m"
+
+
 def parse_duration(duration_str: str) -> int:
     """
     Parse duration string to minutes.
@@ -234,6 +289,12 @@ Examples:
   # List available projects and services
   mite list projects
   mite list services
+  
+  # View timesheet
+  mite timesheet              # Today's entries
+  mite timesheet --week       # This week
+  mite timesheet --last-week  # Last week
+  mite timesheet --from 2025-01-01 --to 2025-01-15
         """
     )
     
@@ -256,6 +317,19 @@ Examples:
     list_parser = subparsers.add_parser('list', help='List projects or services')
     list_parser.add_argument('resource', choices=['projects', 'services'], 
                             help='Resource to list')
+    
+    # Timesheet command
+    timesheet_parser = subparsers.add_parser('timesheet', help='View time entries')
+    timesheet_parser.add_argument('--today', action='store_true', help='Show today\'s entries (default)')
+    timesheet_parser.add_argument('--yesterday', action='store_true', help='Show yesterday\'s entries')
+    timesheet_parser.add_argument('--week', action='store_true', help='Show this week\'s entries')
+    timesheet_parser.add_argument('--last-week', action='store_true', help='Show last week\'s entries')
+    timesheet_parser.add_argument('--month', action='store_true', help='Show this month\'s entries')
+    timesheet_parser.add_argument('--last-month', action='store_true', help='Show last month\'s entries')
+    timesheet_parser.add_argument('--from', dest='from_date', help='Start date (YYYY-MM-DD)')
+    timesheet_parser.add_argument('--to', dest='to_date', help='End date (YYYY-MM-DD)')
+    timesheet_parser.add_argument('--project', help='Filter by project name or ID')
+    timesheet_parser.add_argument('--limit', type=int, default=100, help='Maximum entries to show')
     
     args = parser.parse_args()
     
@@ -372,6 +446,104 @@ Examples:
             print(f"  Project: {entry['project_name']}")
         if entry.get('service_name'):
             print(f"  Service: {entry['service_name']}")
+    
+    # Handle timesheet command
+    elif args.command == 'timesheet':
+        # Determine date filter
+        at_filter = None
+        from_date = None
+        to_date = None
+        
+        if args.from_date and args.to_date:
+            from_date = args.from_date
+            to_date = args.to_date
+            # Validate date formats
+            try:
+                datetime.strptime(from_date, '%Y-%m-%d')
+                datetime.strptime(to_date, '%Y-%m-%d')
+            except ValueError:
+                print("Error: Dates must be in YYYY-MM-DD format")
+                sys.exit(1)
+        elif args.yesterday:
+            at_filter = 'yesterday'
+        elif args.week:
+            at_filter = 'this_week'
+        elif args.last_week:
+            at_filter = 'last_week'
+        elif args.month:
+            at_filter = 'this_month'
+        elif args.last_month:
+            at_filter = 'last_month'
+        else:
+            # Default to today
+            at_filter = 'today'
+        
+        # Handle project filter
+        project_id = None
+        if args.project:
+            try:
+                project_id = int(args.project)
+            except ValueError:
+                project_id = client.find_project_by_name(args.project)
+                if project_id is None:
+                    print(f"Error: No project found matching '{args.project}'")
+                    sys.exit(1)
+        
+        # Fetch time entries
+        entries = client.get_time_entries(
+            from_date=from_date,
+            to_date=to_date,
+            at=at_filter,
+            project_id=project_id,
+            limit=args.limit
+        )
+        
+        if not entries:
+            print("No time entries found.")
+            sys.exit(0)
+        
+        # Calculate totals
+        total_minutes = 0
+        daily_totals = {}
+        
+        print(f"\nTime Entries ({at_filter or f'{from_date} to {to_date}'})")
+        print("=" * 60)
+        
+        for entry_data in entries:
+            entry = entry_data.get('time_entry', {})
+            date_str = entry.get('date_at', 'N/A')
+            minutes = entry.get('minutes', 0)
+            note = entry.get('note', 'No description')
+            project = entry.get('project_name', 'No project')
+            service = entry.get('service_name', 'No service')
+            
+            total_minutes += minutes
+            daily_totals[date_str] = daily_totals.get(date_str, 0) + minutes
+            
+            # Format duration
+            hours = minutes // 60
+            mins = minutes % 60
+            duration = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
+            
+            print(f"\n{date_str} - {duration}")
+            print(f"  Project: {project}")
+            print(f"  Service: {service}")
+            print(f"  Note: {note}")
+        
+        print("\n" + "=" * 60)
+        print("Summary:")
+        
+        # Show daily totals
+        for date_str in sorted(daily_totals.keys()):
+            daily_mins = daily_totals[date_str]
+            daily_hours = daily_mins // 60
+            daily_remaining = daily_mins % 60
+            print(f"  {date_str}: {daily_hours}h {daily_remaining}m")
+        
+        # Show total
+        total_hours = total_minutes // 60
+        total_remaining = total_minutes % 60
+        print(f"\nTotal: {total_hours}h {total_remaining}m")
 
 
 if __name__ == '__main__':

@@ -64,6 +64,30 @@ Your API key can be found in your Mite account settings.
 ./mite_cli.py list services
 ```
 
+### View timesheet
+
+```bash
+# View today's time entries
+./mite_cli.py timesheet
+
+# View this week's entries
+./mite_cli.py timesheet --week
+
+# View last week's entries
+./mite_cli.py timesheet --last-week
+
+# View specific date range
+./mite_cli.py timesheet --from 2025-01-01 --to 2025-01-15
+
+# Filter by project
+./mite_cli.py timesheet --week --project "Hospicura Platform"
+
+# Other options
+./mite_cli.py timesheet --yesterday
+./mite_cli.py timesheet --month
+./mite_cli.py timesheet --last-month
+```
+
 ## Configuration
 
 The tool supports multiple configuration methods (in order of priority):
