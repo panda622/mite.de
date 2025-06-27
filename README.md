@@ -1,32 +1,48 @@
 # Mite CLI Tool
 
-A command-line interface for adding time entries to your Mite account (collumino.mite.de).
+A lightweight shell script for Mite time tracking using curl and jq.
+
+## Requirements
+
+- `curl` - for API requests
+- `jq` - for JSON parsing
+
+Install jq:
+```bash
+# Ubuntu/Debian
+sudo apt-get install jq
+
+# macOS
+brew install jq
+```
 
 ## Installation
 
-1. Install Python dependencies:
+Just make the script executable:
 ```bash
-pip install -r requirements.txt
+chmod +x mite.sh
 ```
 
-2. Configure your Mite credentials using one of these methods:
+## Configuration
 
-   **Option 1: Using .env file (recommended)**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your API key
-   ```
+Configure your credentials using one of these methods:
 
-   **Option 2: Using environment variables**
-   ```bash
-   export MITE_ACCOUNT=collumino
-   export MITE_API_KEY=your_api_key_here
-   ```
+**Option 1: Using .env file (recommended)**
+```bash
+cp .env.example .env
+# Edit .env and add your API key
+```
 
-   **Option 3: Using config command**
-   ```bash
-   ./mite_cli.py config --account collumino --api-key YOUR_API_KEY
-   ```
+**Option 2: Using config command**
+```bash
+./mite.sh config
+```
+
+**Option 3: Environment variables**
+```bash
+export MITE_ACCOUNT=collumino
+export MITE_API_KEY=your_api_key_here
+```
 
 Your API key can be found in your Mite account settings.
 
@@ -36,72 +52,58 @@ Your API key can be found in your Mite account settings.
 
 ```bash
 # Add 2 hours of work
-./mite_cli.py add 2h "Worked on feature implementation"
+./mite.sh add 2h "Worked on feature implementation"
 
 # Add 90 minutes
-./mite_cli.py add 90m "Bug fixing"
+./mite.sh add 90m "Bug fixing"
 
 # Add 1 hour 30 minutes
-./mite_cli.py add 1h30m "Code review"
+./mite.sh add 1h30m "Code review"
 
 # Add time for a specific date
-./mite_cli.py add 2h "Meeting" --date 2025-01-15
+./mite.sh add 2h "Meeting" --date 2025-01-15
 
-# Add time with project and service IDs
-./mite_cli.py add 2h "Development" --project 123 --service 456
-
-# Add time with project and service names
-./mite_cli.py add 2h "Development" --project "My Project" --service "Programming"
-```
-
-### List projects and services
-
-```bash
-# List all available projects
-./mite_cli.py list projects
-
-# List all available services
-./mite_cli.py list services
+# Add time with project and service (by name or ID)
+./mite.sh add 2h "Development" --project "My Project" --service "Programming"
 ```
 
 ### View timesheet
 
 ```bash
-# View today's time entries
-./mite_cli.py timesheet
+# View today's entries
+./mite.sh timesheet
 
-# View this week's entries
-./mite_cli.py timesheet --week
+# View this week
+./mite.sh timesheet --week
 
-# View last week's entries
-./mite_cli.py timesheet --last-week
+# View this month (with calendar view)
+./mite.sh timesheet --month
 
-# View specific date range
-./mite_cli.py timesheet --from 2025-01-01 --to 2025-01-15
+# View last month
+./mite.sh timesheet --last-month
 
 # Filter by project
-./mite_cli.py timesheet --week --project "Your Project"
-
-# Other options
-./mite_cli.py timesheet --yesterday
-./mite_cli.py timesheet --month
-./mite_cli.py timesheet --last-month
+./mite.sh timesheet --month --project "My Project"
 ```
 
-## Configuration
+### List resources
 
-The tool supports multiple configuration methods (in order of priority):
+```bash
+# List all projects
+./mite.sh list projects
 
-1. **.env file** - Create a `.env` file in the project directory
-2. **Environment variables** - Set MITE_ACCOUNT and MITE_API_KEY
-3. **Config file** - Stored in `~/.mite_config.json`
+# List all services
+./mite.sh list services
+```
 
-## Project and Service Names
+## Features
 
-You can use either IDs or partial names when specifying projects and services:
-- The tool will first try exact name matches (case-insensitive)
-- If no exact match, it will search for partial matches
-- If multiple matches exist, it will use the first one found
+- ✅ Add time entries with automatic project/service name lookup
+- ✅ View timesheets with multiple date filters
+- ✅ Monthly calendar view showing daily hours and off days
+- ✅ Colored output for better readability
+- ✅ No dependencies except curl and jq
+- ✅ Lightweight and fast
 
 ## Duration Formats
 
@@ -112,12 +114,46 @@ The tool accepts various duration formats:
 - `90` - 90 minutes (plain number is interpreted as minutes)
 - `1.5h` - 1.5 hours
 
+## Monthly Calendar View
+
+When using `--month` or `--last-month`, you get a visual calendar:
+- ✓ = 8+ hours (full day)
+- ◐ = 6-8 hours (partial day)
+- ○ = <6 hours (short day)
+- ✗ OFF = Working day with no time entry
+
+### Example Output
+
+```
+$ ./mite.sh timesheet --month
+
+📅 January 2025
++------------+------------+------------+------------+------------+------------+------------+
+|    Mon     |    Tue     |    Wed     |    Thu     |    Fri     |    Sat     |    Sun     |
++------------+------------+------------+------------+------------+------------+------------+
+|            |            |  1 ✓ 8h    |  2 ✓ 8h    |  3 ✓ 8h    |  4         |  5         |
+|  6 ✓ 8h    |  7 ◐ 6h    |  8 ✓ 8h    |  9 ✓ 8h    | 10 ✓ 8h    | 11         | 12         |
+| 13 ✓ 8h    | 14 ✓ 8h    | 15 ✗ OFF   | 16 ✓ 8h    | 17 ○ 4h    | 18         | 19         |
+| 20 ✓ 8h    | 21 ✓ 8h    | 22 ✓ 8h    | 23 ✓ 8h    | 24 ✓ 8h    | 25         | 26         |
+| 27 ✓ 8h    | 28 ✓ 8h    | 29 ✓ 8h    | 30 ✓ 8h    | 31 ✓ 8h    |            |            |
++------------+------------+------------+------------+------------+------------+------------+
+
+📊 Summary
+─────────────────────────────────────
+Total Time: 154h
+Average per Day: 7h 42m
+Days Worked: 20
+Off Days: 1 days
+Dates: 15/01
+─────────────────────────────────────
+```
+
 ## Security
 
 Your API key can be stored in three ways:
 
 1. **.env file** (recommended) - Store in project directory, add to `.gitignore`
 2. **Environment variables** - Set in your shell profile
-3. **Config file** - Stored in `~/.mite_config.json` with restricted permissions (600)
+3. **Config file** - Stored in `~/.mite_config` with restricted permissions (600)
 
-⚠️ **Important**: Never commit your `.env` file or API key to version control. Add `.env` to your `.gitignore` file.
+⚠️ **Important**: Never commit your `.env` file or API key to version control.
