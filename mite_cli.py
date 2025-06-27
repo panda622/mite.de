@@ -13,6 +13,13 @@ import requests
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from datetime import date, timedelta
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
+from rich import box
+import calendar
+from collections import defaultdict
 
 
 class MiteClient:
@@ -449,10 +456,13 @@ Examples:
     
     # Handle timesheet command
     elif args.command == 'timesheet':
+        console = Console()
+        
         # Determine date filter
         at_filter = None
         from_date = None
         to_date = None
+        period_title = "Today"
         
         if args.from_date and args.to_date:
             from_date = args.from_date
@@ -462,21 +472,28 @@ Examples:
                 datetime.strptime(from_date, '%Y-%m-%d')
                 datetime.strptime(to_date, '%Y-%m-%d')
             except ValueError:
-                print("Error: Dates must be in YYYY-MM-DD format")
+                console.print("[red]Error: Dates must be in YYYY-MM-DD format[/red]")
                 sys.exit(1)
+            period_title = f"{from_date} to {to_date}"
         elif args.yesterday:
             at_filter = 'yesterday'
+            period_title = "Yesterday"
         elif args.week:
             at_filter = 'this_week'
+            period_title = "This Week"
         elif args.last_week:
             at_filter = 'last_week'
+            period_title = "Last Week"
         elif args.month:
             at_filter = 'this_month'
+            period_title = "This Month"
         elif args.last_month:
             at_filter = 'last_month'
+            period_title = "Last Month"
         else:
             # Default to today
             at_filter = 'today'
+            period_title = "Today"
         
         # Handle project filter
         project_id = None
@@ -486,7 +503,7 @@ Examples:
             except ValueError:
                 project_id = client.find_project_by_name(args.project)
                 if project_id is None:
-                    print(f"Error: No project found matching '{args.project}'")
+                    console.print(f"[red]Error: No project found matching '{args.project}'[/red]")
                     sys.exit(1)
         
         # Fetch time entries
@@ -499,15 +516,15 @@ Examples:
         )
         
         if not entries:
-            print("No time entries found.")
+            console.print("[yellow]No time entries found.[/yellow]")
             sys.exit(0)
         
-        # Calculate totals
+        # Process entries
         total_minutes = 0
         daily_totals = {}
-        
-        print(f"\nTime Entries ({at_filter or f'{from_date} to {to_date}'})")
-        print("=" * 60)
+        entries_by_date = defaultdict(list)
+        project_totals = defaultdict(int)
+        service_totals = defaultdict(int)
         
         for entry_data in entries:
             entry = entry_data.get('time_entry', {})
@@ -519,31 +536,225 @@ Examples:
             
             total_minutes += minutes
             daily_totals[date_str] = daily_totals.get(date_str, 0) + minutes
+            project_totals[project] += minutes
+            service_totals[service] += minutes
             
-            # Format duration
-            hours = minutes // 60
-            mins = minutes % 60
-            duration = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
-            
-            print(f"\n{date_str} - {duration}")
-            print(f"  Project: {project}")
-            print(f"  Service: {service}")
-            print(f"  Note: {note}")
+            entries_by_date[date_str].append({
+                'minutes': minutes,
+                'note': note,
+                'project': project,
+                'service': service
+            })
         
-        print("\n" + "=" * 60)
-        print("Summary:")
+        # Display based on period type
+        if at_filter in ['this_month', 'last_month'] or (from_date and to_date and 
+            (datetime.strptime(to_date, '%Y-%m-%d') - datetime.strptime(from_date, '%Y-%m-%d')).days > 20):
+            # Monthly calendar view
+            display_monthly_calendar(console, entries_by_date, daily_totals, period_title)
+        else:
+            # Detailed table view
+            display_timesheet_table(console, entries_by_date, period_title)
         
-        # Show daily totals
-        for date_str in sorted(daily_totals.keys()):
-            daily_mins = daily_totals[date_str]
-            daily_hours = daily_mins // 60
-            daily_remaining = daily_mins % 60
-            print(f"  {date_str}: {daily_hours}h {daily_remaining}m")
+        # Summary statistics
+        display_summary_stats(console, total_minutes, daily_totals, project_totals, service_totals)
+
+
+def find_off_days(daily_totals):
+    """Find working days (Mon-Fri) that have no time entries."""
+    if not daily_totals:
+        return []
+    
+    # Get date range from entries
+    dates = [datetime.strptime(d, '%Y-%m-%d') for d in daily_totals.keys()]
+    start_date = min(dates)
+    end_date = max(dates)
+    
+    # Don't go beyond today
+    today = datetime.now().date()
+    if end_date.date() > today:
+        end_date = datetime.combine(today, datetime.min.time())
+    
+    off_days = []
+    current = start_date
+    
+    while current <= end_date:
+        # Check if it's a working day (Monday=0, Friday=4)
+        if current.weekday() < 5:  # Monday to Friday
+            date_str = current.strftime('%Y-%m-%d')
+            if date_str not in daily_totals:
+                off_days.append(current)
+        current += timedelta(days=1)
+    
+    return off_days
+
+
+def display_monthly_calendar(console, entries_by_date, daily_totals, period_title):
+    """Display entries in a monthly calendar format."""
+    if not daily_totals:
+        return
+    
+    # Get the month and year from the first entry
+    first_date = min(daily_totals.keys())
+    date_obj = datetime.strptime(first_date, '%Y-%m-%d')
+    year = date_obj.year
+    month = date_obj.month
+    
+    # Create calendar
+    cal = calendar.monthcalendar(year, month)
+    month_name = calendar.month_name[month]
+    
+    # Create table
+    table = Table(title=f"📅 {month_name} {year} - {period_title}", box=box.ROUNDED)
+    table.add_column("Mon", justify="center", style="cyan", width=10)
+    table.add_column("Tue", justify="center", style="cyan", width=10)
+    table.add_column("Wed", justify="center", style="cyan", width=10)
+    table.add_column("Thu", justify="center", style="cyan", width=10)
+    table.add_column("Fri", justify="center", style="cyan", width=10)
+    table.add_column("Sat", justify="center", style="dim", width=10)
+    table.add_column("Sun", justify="center", style="dim", width=10)
+    
+    # Fill calendar
+    for week in cal:
+        row = []
+        for day in week:
+            if day == 0:
+                row.append("")
+            else:
+                date_str = f"{year}-{month:02d}-{day:02d}"
+                if date_str in daily_totals:
+                    minutes = daily_totals[date_str]
+                    hours = minutes / 60
+                    # Color code based on hours
+                    if hours >= 8:
+                        icon = "✓"
+                        color = "green"
+                    elif hours >= 6:
+                        icon = "◐"
+                        color = "yellow"
+                    else:
+                        icon = "○"
+                        color = "red"
+                    
+                    cell_text = f"[bold]{day:2d}[/bold] [{color}]{icon} {format_duration(minutes)}[/{color}]"
+                    row.append(cell_text)
+                else:
+                    # Check if this is a working day (Mon-Fri)
+                    day_of_week = datetime(year, month, day).weekday()
+                    if day_of_week < 5:  # Monday to Friday
+                        # Check if date is in the future
+                        if datetime(year, month, day).date() > datetime.now().date():
+                            row.append(f"[dim]{day:2d}[/dim]")
+                        else:
+                            # This is a past working day with no entry - mark as off day
+                            row.append(f"[bold]{day:2d}[/bold] [bold red]✗ OFF[/bold red]")
+                    else:
+                        # Weekend
+                        row.append(f"[dim]{day:2d}[/dim]")
+        table.add_row(*row)
+    
+    console.print(table)
+    
+    # Print legend
+    legend = Text()
+    legend.append("\nLegend: ", style="bold")
+    legend.append("✓ 8h+ ", style="green")
+    legend.append("◐ 6-8h ", style="yellow")
+    legend.append("○ <6h ", style="red")
+    legend.append("✗ OFF ", style="bold red")
+    console.print(legend)
+
+
+def display_timesheet_table(console, entries_by_date, period_title):
+    """Display entries in a detailed table format."""
+    table = Table(title=f"⏰ Timesheet - {period_title}", box=box.ROUNDED)
+    table.add_column("Date", style="cyan", width=12)
+    table.add_column("Duration", justify="right", style="magenta", width=10)
+    table.add_column("Project", style="blue", width=25)
+    table.add_column("Service", style="green", width=20)
+    table.add_column("Note", style="white", width=40)
+    
+    for date_str in sorted(entries_by_date.keys()):
+        for i, entry in enumerate(entries_by_date[date_str]):
+            # Only show date for first entry of the day
+            date_display = date_str if i == 0 else ""
+            table.add_row(
+                date_display,
+                format_duration(entry['minutes']),
+                entry['project'],
+                entry['service'],
+                entry['note'][:40] + "..." if len(entry['note']) > 40 else entry['note']
+            )
+        # Add daily total
+        daily_total = sum(e['minutes'] for e in entries_by_date[date_str])
+        table.add_row(
+            "",
+            f"[bold]{format_duration(daily_total)}[/bold]",
+            "[dim]Daily Total[/dim]",
+            "",
+            "",
+            end_section=True
+        )
+    
+    console.print(table)
+
+
+def display_summary_stats(console, total_minutes, daily_totals, project_totals, service_totals):
+    """Display summary statistics."""
+    # Create summary panel
+    summary_lines = []
+    
+    # Total time
+    summary_lines.append(f"[bold cyan]Total Time:[/bold cyan] {format_duration(total_minutes)}")
+    
+    # Average per day
+    if daily_totals:
+        avg_minutes = total_minutes / len(daily_totals)
+        summary_lines.append(f"[bold cyan]Average per Day:[/bold cyan] {format_duration(int(avg_minutes))}")
+        summary_lines.append(f"[bold cyan]Days Worked:[/bold cyan] {len(daily_totals)}")
         
-        # Show total
-        total_hours = total_minutes // 60
-        total_remaining = total_minutes % 60
-        print(f"\nTotal: {total_hours}h {total_remaining}m")
+        # Calculate off days (working days with no entries)
+        off_days = find_off_days(daily_totals)
+        if off_days:
+            summary_lines.append(f"[bold red]Off Days:[/bold red] {len(off_days)} days")
+            # Show specific dates
+            off_dates_str = ", ".join([d.strftime("%d/%m") for d in sorted(off_days)])
+            summary_lines.append(f"[dim]Dates: {off_dates_str}[/dim]")
+    
+    console.print(Panel("\n".join(summary_lines), title="📊 Summary", box=box.ROUNDED, width=76))
+    
+    # Project breakdown
+    if len(project_totals) > 1:
+        project_table = Table(title="🏢 Time by Project", box=box.SIMPLE, width=76)
+        project_table.add_column("Project", style="blue", width=40)
+        project_table.add_column("Time", justify="right", style="magenta", width=15)
+        project_table.add_column("Percentage", justify="right", style="yellow", width=15)
+        
+        for project, minutes in sorted(project_totals.items(), key=lambda x: x[1], reverse=True):
+            percentage = (minutes / total_minutes) * 100
+            project_table.add_row(
+                project,
+                format_duration(minutes),
+                f"{percentage:.1f}%"
+            )
+        
+        console.print(project_table)
+    
+    # Service breakdown
+    if len(service_totals) > 1:
+        service_table = Table(title="🛠️  Time by Service", box=box.SIMPLE, width=76)
+        service_table.add_column("Service", style="green", width=40)
+        service_table.add_column("Time", justify="right", style="magenta", width=15)
+        service_table.add_column("Percentage", justify="right", style="yellow", width=15)
+        
+        for service, minutes in sorted(service_totals.items(), key=lambda x: x[1], reverse=True):
+            percentage = (minutes / total_minutes) * 100
+            service_table.add_row(
+                service,
+                format_duration(minutes),
+                f"{percentage:.1f}%"
+            )
+        
+        console.print(service_table)
 
 
 if __name__ == '__main__':

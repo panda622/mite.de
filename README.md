@@ -80,7 +80,7 @@ Your API key can be found in your Mite account settings.
 ./mite_cli.py timesheet --from 2025-01-01 --to 2025-01-15
 
 # Filter by project
-./mite_cli.py timesheet --week --project "Hospicura Platform"
+./mite_cli.py timesheet --week --project "Your Project"
 
 # Other options
 ./mite_cli.py timesheet --yesterday
@@ -114,4 +114,10 @@ The tool accepts various duration formats:
 
 ## Security
 
-Your API key is stored in `~/.mite_config.json` with restricted permissions (600).
+Your API key can be stored in three ways:
+
+1. **.env file** (recommended) - Store in project directory, add to `.gitignore`
+2. **Environment variables** - Set in your shell profile
+3. **Config file** - Stored in `~/.mite_config.json` with restricted permissions (600)
+
+⚠️ **Important**: Never commit your `.env` file or API key to version control. Add `.env` to your `.gitignore` file.
