@@ -242,12 +242,20 @@ display_calendar() {
     echo "+------------+------------+------------+------------+------------+------------+------------+"
     
     # Get first day of month (0=Sunday, 1=Monday, etc)
-    local first_day=$(date -d "$year-$month-01" +%w)
+    # BSD date (macOS) compatible
+    local first_day=$(date -j -f "%Y-%m-%d" "$year-$month-01" +%w 2>/dev/null || date -d "$year-$month-01" +%w 2>/dev/null)
     # Adjust to Monday start (0=Monday)
     first_day=$(( (first_day + 6) % 7 ))
-    
-    # Days in month
-    local days_in_month=$(date -d "$year-$month-01 +1 month -1 day" +%d)
+
+    # Days in month - use BSD date for macOS, GNU date for Linux
+    local days_in_month
+    if date -j -f "%Y-%m-%d" "$year-$month-01" +%d &>/dev/null; then
+        # BSD date (macOS)
+        days_in_month=$(date -j -v+1m -v-1d -f "%Y-%m-%d" "$year-$month-01" +%d)
+    else
+        # GNU date (Linux)
+        days_in_month=$(date -d "$year-$month-01 +1 month -1 day" +%d)
+    fi
     
     local day=1
     local off_days=""
@@ -262,8 +270,8 @@ display_calendar() {
             elif [ $day -le $days_in_month ]; then
                 local date_str=$(printf "%04d-%02d-%02d" $year $month $day)
                 
-                # Check if we have data for this date
-                local minutes=$(echo "$entries" | jq -r --arg date "$date_str" '.[] | select(.time_entry.date_at == $date) | .time_entry.minutes' | head -1)
+                # Check if we have data for this date (sum all entries for the date)
+                local minutes=$(echo "$entries" | jq --arg date "$date_str" '[.[] | select(.time_entry.date_at == $date) | .time_entry.minutes] | add // empty' | grep -v "null")
                 
                 if [ -n "$minutes" ] && [ "$minutes" != "null" ]; then
                     local hours=$((minutes / 60))
@@ -280,8 +288,8 @@ display_calendar() {
                     fi
                 else
                     # No entry for this date
-                    local day_of_week=$(date -d "$date_str" +%w 2>/dev/null || echo 0)
-                    if [ $day_of_week -ge 1 ] && [ $day_of_week -le 5 ]; then
+                    local day_of_week=$(date -j -f "%Y-%m-%d" "$date_str" +%w 2>/dev/null || date -d "$date_str" +%w 2>/dev/null || echo 0)
+                    if [ -n "$day_of_week" ] && [ "$day_of_week" -ge 1 ] && [ "$day_of_week" -le 5 ]; then
                         # Working day
                         if [[ "$date_str" < "$(date +%Y-%m-%d)" ]]; then
                             week="${week}| $(printf "%2d" $day) ${BOLD}${RED}✗ OFF${NC}   "
@@ -384,9 +392,10 @@ view_timesheet() {
         # Get year and month from first entry or use current
         local first_date=$(echo "$entries" | jq -r '.[0].time_entry.date_at // empty')
         if [ -n "$first_date" ]; then
-            local year=$(date -d "$first_date" +%Y)
-            local month=$(date -d "$first_date" +%m)
-            local month_name=$(date -d "$first_date" +%B)
+            # BSD date (macOS) compatible
+            local year=$(date -j -f "%Y-%m-%d" "$first_date" +%Y 2>/dev/null || date -d "$first_date" +%Y 2>/dev/null)
+            local month=$(date -j -f "%Y-%m-%d" "$first_date" +%m 2>/dev/null || date -d "$first_date" +%m 2>/dev/null)
+            local month_name=$(date -j -f "%Y-%m-%d" "$first_date" +%B 2>/dev/null || date -d "$first_date" +%B 2>/dev/null)
         else
             local year=$(date +%Y)
             local month=$(date +%m)
